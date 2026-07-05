@@ -20,6 +20,6 @@ async def startup_event():
     try:
         client = get_redis_client()
         if client.ping():
-            print("🚀 Successfully connected to the Docker Redis instance!")
+            print(" Successfully connected to the Docker Redis instance!")
     except Exception as e:
-        print(f"❌ Redis connection failed: {e}")
+        print(f" Redis connection failed: {e}")

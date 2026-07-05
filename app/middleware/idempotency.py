@@ -17,7 +17,7 @@ async def idempotency_middleware(request: Request, call_next):
             content={"error": "Missing Required X-Idempotency-Key Header"}
         )
 
-    # --- NEW: GENERATE PAYLOAD FINGERPRINT ---
+    # GENERATE PAYLOAD FINGERPRINT 
     # We read the raw body bytes to generate a unique cryptographic hash
     body_bytes = await request.body()
     request_hash = hashlib.sha256(body_bytes).hexdigest()
@@ -27,20 +27,20 @@ async def idempotency_middleware(request: Request, call_next):
         return {"type": "http.request", "body": body_bytes, "more_body": False}
     request._receive = receive
 
-    # --- ATOMIC LOCKING WITH PAYLOAD FINGERPRINT ---
+    #ATOMIC LOCKING WITH PAYLOAD FINGERPRINT
     initial_state = {
         "status": "STARTED",
         "request_hash": request_hash
     }
     
     is_new_request = redis_client.setnx(idempotency_key, json.dumps(initial_state))
-    redis_client.expire(idempotency_key, 120)  # 2-minute short safety timeout
+    redis_client.expire(idempotency_key, 120) 
 
     if not is_new_request:
         cached_raw = redis_client.get(idempotency_key)
         cached_data = json.loads(cached_raw) if cached_raw else {}
 
-        # SECURITY CHECK: Did the payload change for the same key?
+        # Did the payload change for the same key?
         if cached_data.get("request_hash") != request_hash:
             print(f"🛑 Security Alert! Payload mismatch detected for key: {idempotency_key}")
             return JSONResponse(
@@ -48,21 +48,21 @@ async def idempotency_middleware(request: Request, call_next):
                 content={"error": "Idempotency Key Conflict: Request body does not match the original request."}
             )
 
-        # Scenario A: In-flight
+        # In-flight
         if cached_data.get("status") == "STARTED":
             return JSONResponse(
                 status_code=409,
                 content={"error": "A request with this idempotency key is already in progress."}
             )
         
-        # Scenario B: Cache Hit
+        # Cache Hit
         if cached_data.get("status") == "COMPLETED":
             return JSONResponse(
                 status_code=200, 
                 content={"_source": "idempotency_cache", "data": cached_data.get("response")}
             )
 
-    # --- PROCESSING PATH ---
+    # PROCESSING PATH 
     try:
         response = await call_next(request)
         
@@ -75,7 +75,7 @@ async def idempotency_middleware(request: Request, call_next):
             
             final_payload = {
                 "status": "COMPLETED",
-                "request_hash": request_hash,  # Keep hash for future lookups
+                "request_hash": request_hash, 
                 "response": body_json
             }
             redis_client.setex(idempotency_key, 86400, json.dumps(final_payload))
