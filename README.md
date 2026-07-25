@@ -2,7 +2,73 @@
 
 An idempotency middleware engine built with **FastAPI** and **Redis**. This system guarantees that identical API requests are processed safely exactly once—preventing double-charging in payment processing, eliminating distributed concurrent race conditions, and defending against payload hijacking.
 
-## 🏗️ Architecture & Core Mechanics
+## 🏗️ Architecture & Data Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Adapter as 🔌 Framework Adapter<br/>(FastAPI / Flask / Django)
+    participant Core as 🧠 Core Engine<br/>(shield_core.py)
+    participant Redis as 💾 Redis Database
+    participant Router as ⚙️ API Route Handler<br/>(payments.py)
+
+    %% Step 1: Request Initiation
+    Client->>Adapter: POST /api/payments<br/>(Headers: X-Idempotency-Key, Body)
+    
+    %% Step 2: Extraction & Core Call
+    Note over Adapter: 1. Extract X-Idempotency-Key<br/>2. Catch & convert stream to Raw Bytes
+    Adapter->>Core: process_request(key, body_bytes)
+    
+    %% Step 3: Core Hash & Lock Attempt
+    Note over Core: SHA-256 Hash(body_bytes)
+    Core->>Redis: SETNX key {"status": "STARTED", "request_hash": hash}
+    
+    alt Lock Acquired (First Time Request)
+        Redis-->>Core: Returns True (1)
+        Core->>Redis: EXPIRE key 120s (Safety Lock)
+        Core-->>Adapter: Return {"action": "PROCEED", "request_hash": hash}
+        
+        %% Step 4: Downstream Route Processing
+        Adapter->>Router: Execute Endpoint Logic
+        Note over Router: Simulate DB Write / Payment Gateway (2s)
+        Router-->>Adapter: Returns Success Payload Dict
+        
+        %% Step 5: Finalizing State
+        Adapter->>Core: commit_success(key, hash, response_data)
+        Core->>Redis: SETEX key 86400s {"status": "COMPLETED", "response": data}
+        Adapter-->>Client: 200 OK (Fresh Processing Output)
+
+    else Lock Contested: Tampered Payload
+        Redis-->>Core: Returns False (0)
+        Core->>Redis: GET key
+        Redis-->>Core: Returns Cached State Json
+        Note over Core: Compare incoming Hash vs Cached Hash
+        Core-->>Adapter: Return {"action": "REJECT_TAMPERED"}
+        Adapter-->>Client: 422 Unprocessable Entity<br/>(Payload Mismatch Error)
+
+    else Lock Contested: Concurrent Request
+        Note over Core: Cached Status == "STARTED"
+        Core-->>Adapter: Return {"action": "REJECT_CONCURRENT"}
+        Adapter-->>Client: 409 Conflict<br/>(Request Already In Progress)
+
+    else Lock Contested: Cache Hit
+        Note over Core: Cached Status == "COMPLETED"
+        Core-->>Adapter: Return {"action": "SERVE_CACHE", "data": response}
+        Adapter-->>Client: 200 OK (Served from Idempotency Cache)
+    end
+
+    %% Error Handling
+    rect rgb(255, 230, 230)
+        Note over Adapter, Router: ⚠️ Error Handling Flow
+        alt Router Crashes / Raises Exception
+            Router--xAdapter: Exception Thrown!
+            Adapter->>Core: rollback_lock(key)
+            Core->>Redis: DEL key
+            Adapter-->>Client: 500 Internal Error (Lock Released for Retry)
+        end
+    end
+```
 
 The engine handles incoming `POST` requests by shifting tracking keys through an atomic lifecycle state machine inside Redis.
 
