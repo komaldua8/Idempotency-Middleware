@@ -9,11 +9,7 @@ def flask_idempotent(shield: IdempotencyShield):
             key = request.headers.get("X-Idempotency-Key")
             if not key:
                 return make_response(jsonify({"error": "Missing Required X-Idempotency-Key Header"}), 400)
-
-            # Extract Synchronous Flask execution network byte streams
             body_bytes = request.get_data()
-
-            # Execute Core Logic Audit Process Flow
             decision = shield.process_request(key, body_bytes)
             action = decision["action"]
 

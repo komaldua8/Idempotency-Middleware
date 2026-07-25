@@ -1,12 +1,23 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from app.services.payment_service import process_mock_payment
+import asyncio
+import random
+from fastapi import APIRouter, Request
+from app.config.redis_config import get_redis_client
+from app.core.shield_core import IdempotencyShield
+from app.adapters.fastapi_adapter import fastapi_idempotent
 
-router=APIRouter(prefix="/api/v1")
+router = APIRouter(prefix="/api/v1")
 
-class PaymentRequest(BaseModel):
-    amount:float
+# Initialize engine instances
+redis_client = get_redis_client()
+shield_engine = IdempotencyShield(redis_client)
+
 @router.post("/payments")
-async def create_payment(payload:PaymentRequest):
-    result=await process_mock_payment(payload.amount)
-    return result
+@fastapi_idempotent(shield_engine) # 👈 Decorator attached here
+async def create_payment(payload: dict, request: Request): # 👈 Added 'request: Request'
+    await asyncio.sleep(2)
+    transaction_id = f"tx_mock_{random.randint(4400000000, 4499999999)}"
+    return {
+        "success": True,
+        "amount": payload.get("amount"),
+        "transaction_id": transaction_id
+    }
